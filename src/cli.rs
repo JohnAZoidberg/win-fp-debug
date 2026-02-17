@@ -60,11 +60,17 @@ pub enum Command {
     /// List biometric storage databases (paths, GUIDs, attributes)
     EnumDatabases,
 
-    /// Delete a biometric database file (by number from enum-databases)
+    /// Delete a biometric database by number from enum-databases
     DeleteDatabase {
         /// Database number (1-based, from enum-databases output)
         #[arg(long)]
         db: usize,
+        /// Delete the .DAT file (resets the database; service recreates it clean)
+        #[arg(long)]
+        file: bool,
+        /// Delete the registry entry (fully unregisters the database)
+        #[arg(long)]
+        registry: bool,
     },
 
     /// Check if a Windows Hello credential (password hash) is linked to the biometric identity

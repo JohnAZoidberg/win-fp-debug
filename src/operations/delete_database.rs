@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Devices::BiometricFramework::*;
+use windows::Win32::System::Registry::*;
 use windows::Win32::System::Services::*;
 
 use crate::output::*;
@@ -24,7 +25,6 @@ unsafe fn stop_wbiosrvc() -> Result<bool> {
         }
     };
 
-    // Check current state
     let mut status = SERVICE_STATUS::default();
     QueryServiceStatus(service, &mut status)
         .map_err(|e| anyhow::anyhow!("QueryServiceStatus failed: {}", e))?;
@@ -35,12 +35,10 @@ unsafe fn stop_wbiosrvc() -> Result<bool> {
         return Ok(false);
     }
 
-    // Send stop control
     let mut stop_status = SERVICE_STATUS::default();
     ControlService(service, SERVICE_CONTROL_STOP, &mut stop_status)
         .map_err(|e| anyhow::anyhow!("Failed to stop WbioSrvc: {}", e))?;
 
-    // Poll until stopped (with timeout)
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let mut poll_status = SERVICE_STATUS::default();
@@ -73,7 +71,6 @@ unsafe fn start_wbiosrvc() -> Result<()> {
     StartServiceW(service, None)
         .map_err(|e| anyhow::anyhow!("Failed to start WbioSrvc: {}", e))?;
 
-    // Poll until running (with timeout)
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let mut poll_status = SERVICE_STATUS::default();
@@ -90,14 +87,39 @@ unsafe fn start_wbiosrvc() -> Result<()> {
     bail!("WbioSrvc did not start in time");
 }
 
-pub fn run_delete_database(db_number: usize) -> Result<()> {
+/// Delete the WbioSrvc database registry key.
+fn delete_database_registry_key(db_id: &str) -> Result<()> {
+    unsafe {
+        let subkey = format!(
+            "SYSTEM\\CurrentControlSet\\Services\\WbioSrvc\\Databases\\{}",
+            db_id
+        );
+        let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let status = RegDeleteKeyW(HKEY_LOCAL_MACHINE, PCWSTR(subkey_wide.as_ptr()));
+
+        if status.is_err() {
+            bail!(
+                "Failed to delete registry key: HKLM\\{} (error: {:?})",
+                subkey,
+                status
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn run_delete_database(db_number: usize, delete_file: bool, delete_registry: bool) -> Result<()> {
+    if !delete_file && !delete_registry {
+        bail!("Specify --file to delete the .DAT file, --registry to remove the registry entry, or both");
+    }
+
     print_header("Delete Biometric Database");
 
     if db_number == 0 {
         bail!("Database number must be 1 or greater (use enum-databases to see the list)");
     }
 
-    // Check elevation
     if !crate::elevation::is_elevated()? {
         bail!("This command requires Administrator privileges. Re-run as Administrator.");
     }
@@ -160,24 +182,31 @@ pub fn run_delete_database(db_number: usize) -> Result<()> {
     };
 
     print_info("Target", &format!("Database {} — {}", db_number, db_id));
-
-    if file_path.is_empty() {
-        bail!("Database has no file path — cannot delete");
+    if !file_path.is_empty() {
+        print_info("File", &file_path);
     }
 
-    print_info("File", &file_path);
+    let mut actions: Vec<&str> = Vec::new();
+    if delete_file {
+        actions.push("delete .DAT file");
+    }
+    if delete_registry {
+        actions.push("delete registry entry");
+    }
+    print_info("Actions", &actions.join(", "));
 
-    if !std::path::Path::new(&file_path).exists() {
+    // Determine if we need to touch the file
+    let file_exists = !file_path.is_empty() && std::path::Path::new(&file_path).exists();
+
+    if delete_file && !file_path.is_empty() && file_exists {
+        if let Ok(meta) = std::fs::metadata(&file_path) {
+            print_info("File Size", &format!("{} bytes", meta.len()));
+        }
+    } else if delete_file && !file_path.is_empty() && !file_exists {
         print_warn("Database file does not exist on disk (already deleted or stored on-chip)");
-        return Ok(());
     }
 
-    // Show file size before deletion
-    if let Ok(meta) = std::fs::metadata(&file_path) {
-        print_info("File Size", &format!("{} bytes", meta.len()));
-    }
-
-    // Stop the biometric service
+    // Stop the service (needed for both file and registry operations)
     print_step("Stopping WbioSrvc service...");
     let was_running = unsafe { stop_wbiosrvc()? };
     if was_running {
@@ -186,41 +215,64 @@ pub fn run_delete_database(db_number: usize) -> Result<()> {
         print_info("WbioSrvc", "was already stopped");
     }
 
-    // Delete the database file
-    print_step(&format!("Deleting {}...", file_path));
-    match std::fs::remove_file(&file_path) {
-        Ok(()) => {
-            print_pass("Database file deleted");
-        }
-        Err(e) => {
-            // Try to restart the service before reporting the error
-            print_fail(&format!("Failed to delete database file: {}", e));
-            if was_running {
-                print_step("Restarting WbioSrvc service...");
-                unsafe {
-                    let _ = start_wbiosrvc();
-                }
+    let mut any_error = false;
+
+    // Delete the .DAT file
+    if delete_file && file_exists {
+        print_step(&format!("Deleting {}...", file_path));
+        match std::fs::remove_file(&file_path) {
+            Ok(()) => {
+                print_pass("Database file deleted");
             }
-            bail!("Could not delete {}: {}", file_path, e);
+            Err(e) => {
+                print_fail(&format!("Failed to delete database file: {}", e));
+                any_error = true;
+            }
         }
     }
 
-    // Restart the service (it will recreate a clean empty database)
+    // Delete the registry key
+    if delete_registry {
+        print_step(&format!(
+            "Deleting registry key HKLM\\...\\WbioSrvc\\Databases\\{}...",
+            db_id
+        ));
+        match delete_database_registry_key(&db_id) {
+            Ok(()) => {
+                print_pass("Registry entry deleted");
+            }
+            Err(e) => {
+                print_fail(&format!("{}", e));
+                any_error = true;
+            }
+        }
+    }
+
+    // Restart the service
     if was_running {
         print_step("Restarting WbioSrvc service...");
         unsafe { start_wbiosrvc()? };
-        print_pass("WbioSrvc restarted (clean database will be recreated)");
+        print_pass("WbioSrvc restarted");
     } else {
         print_info(
             "Note",
-            "WbioSrvc was not running — start it manually to recreate the database",
+            "WbioSrvc was not running — start it manually if needed",
         );
     }
 
+    if any_error {
+        bail!("Some operations failed (see above)");
+    }
+
     println!();
-    print_pass("Database deleted successfully");
-    print_step("All fingerprint enrollments in this database have been removed");
-    print_step("Re-enroll fingerprints via Windows Settings > Accounts > Sign-in options");
+    if delete_registry {
+        print_pass("Database unregistered");
+        print_step("The database has been fully removed from the system");
+    } else {
+        print_pass("Database file deleted");
+        print_step("Service will recreate a clean empty database");
+        print_step("Re-enroll fingerprints via Windows Settings > Accounts > Sign-in options");
+    }
 
     Ok(())
 }
