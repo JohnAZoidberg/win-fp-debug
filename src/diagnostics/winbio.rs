@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::process::Command;
 use windows::Win32::Devices::BiometricFramework::*;
 
 use crate::output::*;
@@ -26,8 +27,13 @@ pub fn check_sensor() -> Result<()> {
 
         if unit_count == 0 {
             print_fail("No fingerprint biometric units found");
-            print_step("Ensure the fingerprint sensor driver is installed and WbioSrvc is running");
             winbio_free(unit_array as *const _);
+
+            // Run follow-up diagnostics to surface the root cause
+            println!();
+            check_winbio_events();
+            check_database_config();
+
             return Ok(());
         }
 
@@ -94,4 +100,193 @@ pub fn check_sensor() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Check the WinBio operational event log for recent configuration errors.
+fn check_winbio_events() {
+    print_step("Checking WinBio event log...");
+
+    let ps_script = r#"
+        try {
+            $events = Get-WinEvent -LogName 'Microsoft-Windows-Biometrics/Operational' -MaxEvents 20 -ErrorAction Stop
+            $errors = $events | Where-Object { $_.Id -in @(1106, 1109) }
+            $errors | ForEach-Object {
+                [PSCustomObject]@{
+                    Id      = [int]$_.Id
+                    Level   = [int]$_.Level
+                    Message = [string]$_.Message
+                }
+            } | ConvertTo-Json -Compress
+        } catch {
+            # Log may not exist or be inaccessible — silently return nothing
+        }
+    "#;
+
+    let output = match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.trim();
+
+    if stdout.is_empty() {
+        print_pass("No WinBio configuration errors in event log");
+        return;
+    }
+
+    let events: Vec<serde_json::Value> = if stdout.starts_with('[') {
+        match serde_json::from_str(stdout) {
+            Ok(v) => v,
+            Err(_) => return,
+        }
+    } else {
+        match serde_json::from_str(stdout) {
+            Ok(v) => vec![v],
+            Err(_) => return,
+        }
+    };
+
+    for event in &events {
+        let id = event["Id"].as_i64().unwrap_or(0);
+        let level = event["Level"].as_i64().unwrap_or(0);
+        let message = event["Message"]
+            .as_str()
+            .unwrap_or("(no message)")
+            .lines()
+            .next()
+            .unwrap_or("(no message)");
+
+        let line = format!("Event {}: {}", id, message);
+        if level <= 2 {
+            print_fail(&line);
+        } else {
+            print_warn(&line);
+        }
+    }
+}
+
+/// Check each biometric device's WinBio DatabaseId references against registered databases.
+fn check_database_config() {
+    println!();
+    print_step("Checking device database configuration...");
+
+    // This script:
+    // 1. Gets all biometric PnP devices
+    // 2. For each, reads WinBio\Configurations\*\DatabaseId values
+    // 3. Lists registered databases under WbioSrvc\Databases
+    // 4. Outputs a JSON structure with the comparison results
+    let ps_script = r#"
+        $dbBasePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\WbioSrvc\Databases'
+        $registeredDbs = @()
+        if (Test-Path $dbBasePath) {
+            $registeredDbs = Get-ChildItem $dbBasePath -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.PSChildName.ToLower() }
+        }
+
+        $devs = Get-PnpDevice -Class Biometric -ErrorAction SilentlyContinue
+        if ($null -eq $devs) { exit 0 }
+
+        $results = @()
+        foreach ($dev in $devs) {
+            $id = [string]$dev.InstanceId
+            $name = [string]$dev.FriendlyName
+            $configBase = "HKLM:\SYSTEM\CurrentControlSet\Enum\$id\Device Parameters\WinBio\Configurations"
+            if (-not (Test-Path $configBase)) { continue }
+
+            $configs = @()
+            Get-ChildItem $configBase -ErrorAction SilentlyContinue | ForEach-Object {
+                $configName = $_.PSChildName
+                $dbId = (Get-ItemProperty -Path $_.PSPath -Name 'DatabaseId' -ErrorAction SilentlyContinue).DatabaseId
+                if ($dbId) {
+                    $dbIdLower = $dbId.ToLower()
+                    $registered = $registeredDbs -contains $dbIdLower
+                    $configs += [PSCustomObject]@{
+                        ConfigName = [string]$configName
+                        DatabaseId = [string]$dbId
+                        Registered = [bool]$registered
+                    }
+                }
+            }
+
+            if ($configs.Count -gt 0) {
+                $results += [PSCustomObject]@{
+                    FriendlyName = $name
+                    InstanceId   = $id
+                    Configurations = $configs
+                }
+            }
+        }
+
+        if ($results.Count -gt 0) {
+            $results | ConvertTo-Json -Depth 4 -Compress
+        }
+    "#;
+
+    let output = match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            print_fail(&format!("Failed to run PowerShell: {}", e));
+            return;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.trim();
+
+    if stdout.is_empty() {
+        print_step("No biometric devices with WinBio configuration found");
+        return;
+    }
+
+    let devices: Vec<serde_json::Value> = if stdout.starts_with('[') {
+        match serde_json::from_str(stdout) {
+            Ok(v) => v,
+            Err(_) => return,
+        }
+    } else {
+        match serde_json::from_str(stdout) {
+            Ok(v) => vec![v],
+            Err(_) => return,
+        }
+    };
+
+    let mut any_mismatch = false;
+
+    for dev in &devices {
+        let name = dev["FriendlyName"].as_str().unwrap_or("(unknown)");
+        let instance_id = dev["InstanceId"].as_str().unwrap_or("(unknown)");
+        println!("  Device: {} ({})", name, instance_id);
+
+        let configs = match dev["Configurations"].as_array() {
+            Some(c) => c,
+            None => continue,
+        };
+
+        for config in configs {
+            let config_name = config["ConfigName"].as_str().unwrap_or("?");
+            let db_id = config["DatabaseId"].as_str().unwrap_or("?");
+            let registered = config["Registered"].as_bool().unwrap_or(false);
+
+            println!("    Configuration {} DatabaseId: {}", config_name, db_id);
+            if registered {
+                print_pass(&format!("    Registered in WbioSrvc\\Databases"));
+            } else {
+                print_fail(&format!("    Not registered in WbioSrvc\\Databases"));
+                any_mismatch = true;
+            }
+        }
+    }
+
+    if any_mismatch {
+        print_step(
+            "Reinstall the fingerprint sensor driver to recreate missing database entries",
+        );
+    }
 }
