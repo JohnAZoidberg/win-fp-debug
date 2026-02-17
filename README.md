@@ -2,107 +2,146 @@
 
 Windows Fingerprint Reader Diagnostic Tool. A standalone CLI that debugs fingerprint reader issues at multiple levels: hardware detection, driver/service status, WinBio subsystem enumeration, and interactive operations.
 
-## Prerequisites
+See [BUILDING.md](BUILDING.md) for build instructions.
 
-### Rust Toolchain
-
-Install via [rustup](https://rustup.rs/):
+## Quick Start
 
 ```
-winget install Rustlang.Rustup
+win-fp-debug diagnose
 ```
 
-This installs the `stable-x86_64-pc-windows-msvc` toolchain by default.
+This runs three diagnostic levels — hardware detection, service status, WinBio session — and reports what's working and what isn't. Based on the output:
 
-### MSVC Build Tools + Windows SDK
+| Diagnosis | Next step |
+|---|---|
+| No biometric device found | Check Device Manager > Biometric devices, try `reinstall-driver` |
+| WbioSrvc not running | `start-service`, or set startup type to Automatic in `services.msc` |
+| No WinBio units found | Driver isn't WinBio-compatible, try `reinstall-driver` |
+| Database mismatch | Databases don't match current sensor — see [Common Fixes](#common-fixes) |
+| Everything passes | Run `identify` to test the sensor interactively |
 
-The Rust MSVC toolchain requires both the **MSVC compiler/linker** and the **Windows SDK** (which provides `kernel32.lib` and other import libraries).
+## Commands
 
-**Option A: Via Visual Studio Installer (recommended)**
-
-1. Install [Visual Studio Community 2022](https://visualstudio.microsoft.com/) or Build Tools
-2. In the installer, select the **"Desktop development with C++"** workload
-3. Ensure **"Windows 11 SDK"** (or Windows 10 SDK) is checked under "Individual components"
-
-**Option B: Minimal install via command line**
-
-```powershell
-# Install MSVC Build Tools (if not already installed)
-winget install Microsoft.VisualStudio.2022.BuildTools
-
-# Install Windows SDK (required for kernel32.lib, user32.lib, etc.)
-winget install Microsoft.WindowsSDK.10.0.18362
-```
-
-### PATH Conflict: Git's `link.exe`
-
-If Git for Windows is installed, its `link.exe` (POSIX `link` command) may shadow the MSVC linker. If you see linker errors like `link: extra operand`, create `.cargo/config.toml` in the project root:
-
-```toml
-[target.x86_64-pc-windows-msvc]
-linker = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"
-rustflags = [
-    "-Lnative=C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.18362.0\\um\\x64",
-    "-Lnative=C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.18362.0\\ucrt\\x64",
-    "-Lnative=C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64",
-]
-```
-
-Adjust the version numbers to match your installed MSVC and SDK versions. You can find them by browsing `C:\Program Files\Microsoft Visual Studio\2022\...\VC\Tools\MSVC\` and `C:\Program Files (x86)\Windows Kits\10\Lib\`.
-
-Alternatively, build from a **Developer Command Prompt for VS 2022** which sets up all paths automatically.
-
-## Building
-
-```
-cargo build --release
-```
-
-The output binary is at `target\release\win-fp-debug.exe` with no runtime dependencies.
-
-## Usage
-
-```
-win-fp-debug <COMMAND>
-```
-
-### Diagnostic Commands
+### Diagnostic
 
 | Command | Description |
 |---|---|
-| `diagnose` | Run all 3 diagnostic levels sequentially |
-| `check-hardware` | Level 1: Detect biometric PnP devices via PowerShell |
-| `check-driver` | Level 2: Check WbioSrvc service status and configuration |
-| `check-sensor` | Level 3: Enumerate WinBio units and test session open/close |
+| `diagnose` | Run all 3 diagnostic levels (hardware → driver → sensor) |
+| `check-hardware` | Level 1: PnP biometric device detection |
+| `check-driver` | Level 2: WbioSrvc service status and configuration |
+| `check-sensor` | Level 3: WinBio unit enumeration + session test |
 
-### Interactive Commands
+### Interactive
 
 | Command | Description |
 |---|---|
 | `identify` | Touch sensor to identify the current user (blocks until touch) |
 | `list-fingerprints` | List enrolled fingerprints (requires touch to identify first) |
-| `verify --finger N` | Verify a specific finger matches (1-10, requires two touches) |
+| `verify --finger N` | Verify a specific finger matches (1-10) |
 | `capture` | Capture a raw fingerprint sample and display BIR metadata |
 | `enroll --finger N` | Enroll a new fingerprint (1-10, requires repeated touches) |
 | `delete --finger N` | Delete a fingerprint template (1-10, requires touch to identify) |
 
-### Database Commands
+### Database
 
 | Command | Description |
 |---|---|
-| `enum-databases` | List all biometric databases with file metadata, registry info, and sensor hardware |
-| `delete-database --db N --file` | Delete the .DAT file for database N (service recreates it clean on restart) |
-| `delete-database --db N --registry` | Remove the registry entry for database N (fully unregisters it) |
-| `delete-database --db N --file --registry` | Both: wipe the file and unregister the database |
-| `delete-database --all --file --registry` | Delete all databases (files + registry entries) |
-| `credential-state` | Check if a Windows Hello password hash is linked to the biometric identity |
+| `enum-databases` | List databases with file metadata, registry info, and sensor hardware |
+| `delete-database --db N --file` | Delete the .DAT file for database N (service recreates it clean) |
+| `delete-database --db N --registry` | Remove the registry entry for database N |
+| `delete-database --db N --file --registry` | Both: wipe the file and unregister |
+| `delete-database --all --file --registry` | Delete all databases (files + registry + orphans) |
+| `credential-state` | Check if a Windows Hello password hash is linked to biometric identity |
 
-### Service Commands
+### Service
 
 | Command | Description |
 |---|---|
-| `stop-service` | Stop the WbioSrvc (Windows Biometric Service) |
-| `start-service` | Start the WbioSrvc (Windows Biometric Service) |
+| `stop-service` | Stop WbioSrvc (Windows Biometric Service) |
+| `start-service` | Start WbioSrvc (Windows Biometric Service) |
+
+### Device Management
+
+| Command | Description |
+|---|---|
+| `reinstall-driver` | Export, remove, and re-add the biometric driver to force full INF reinstallation |
+| `remove-device --instance-id <ID>` | Remove a specific PnP device entry by instance ID |
+| `remove-device --phantom` | Remove all phantom (ghost) biometric devices |
+
+## Debugging Fingerprint Issues
+
+### Step 1: Run diagnostics
+
+```
+win-fp-debug diagnose
+```
+
+- **Level 1 (Hardware)**: No device → sensor disconnected or driver missing.
+- **Level 2 (Service)**: WbioSrvc stopped → fingerprint login won't work.
+- **Level 3 (Sensor)**: No units but hardware detected → driver isn't WinBio-compatible.
+
+### Step 2: Check databases
+
+```
+win-fp-debug enum-databases
+```
+
+Look for:
+- **Missing .DAT file** (`os error 2`): registered but file doesn't exist. Restart WbioSrvc if `AutoCreate=Yes`.
+- **Sensor "(not active)"**: database belongs to disconnected hardware. Clean up with `delete-database --registry` or `remove-device --phantom`.
+- **Small file** (< 1 KB): database is empty, no enrollments.
+
+### Step 3: Test the sensor
+
+```
+win-fp-debug identify
+```
+
+Touch the sensor. `WINBIO_E_UNKNOWN_ID` means you're not enrolled in the active database.
+
+### Step 4: Check credential linkage
+
+```
+win-fp-debug credential-state
+```
+
+`CREDENTIAL_NOT_SET` means the biometric identity isn't linked to a Windows password hash. Re-link via Windows Settings > Accounts > Sign-in options.
+
+## Common Fixes
+
+**Reinstall the driver** (fixes corrupted driver state, missing database registry entries):
+```
+win-fp-debug reinstall-driver
+```
+This exports the driver, uninstalls it, then re-adds it — forcing the INF to re-run its AddReg sections. See [INTERNALS.md](INTERNALS.md#how-reinstall-driver-works) for details.
+
+**Reset a corrupted database** (sensor works but login fails):
+```
+win-fp-debug delete-database --db N --file
+```
+Deletes the `.DAT` file. Service recreates it empty on restart. Re-enroll afterward.
+
+**Clean up ghost devices and databases** (after swapping hardware):
+```
+win-fp-debug remove-device --phantom
+win-fp-debug delete-database --db N --registry
+```
+Removes phantom PnP entries and their orphaned database registrations.
+
+**Full system reset** (nuclear option):
+```powershell
+win-fp-debug stop-service
+win-fp-debug delete-database --all --file --registry
+win-fp-debug start-service
+```
+Wipes all databases while the service is stopped, preventing file recreation. The service creates clean databases for active sensors on restart. See [INTERNALS.md](INTERNALS.md#how-delete-database-works) for why stopping the service first matters.
+
+## Notes
+
+- **Administrator**: `delete-database`, `reinstall-driver`, `remove-device`, and some diagnostics require running as Administrator.
+- **Focus**: Console apps must acquire focus via `WinBioAcquireFocus` before `WinBioIdentify`/`WinBioVerify`. The tool handles this automatically.
+- **Interactive commands block**: `identify`, `list-fingerprints`, `verify`, `capture`, and `enroll` block waiting for a finger touch. Press Ctrl+C to cancel.
+- **Database numbering**: `--db` uses 1-based numbering from `enum-databases` output.
 
 ### Finger Positions
 
@@ -118,161 +157,3 @@ win-fp-debug <COMMAND>
 | 8 | Left Middle |
 | 9 | Left Ring |
 | 10 | Left Little |
-
-### Examples
-
-```powershell
-# Run full diagnostics
-win-fp-debug diagnose
-
-# Check if hardware is detected
-win-fp-debug check-hardware
-
-# Identify yourself by touching the sensor
-win-fp-debug identify
-
-# List all enrolled fingerprints
-win-fp-debug list-fingerprints
-
-# Verify your right index finger
-win-fp-debug verify --finger 2
-
-# Enroll your left thumb
-win-fp-debug enroll --finger 6
-
-# Delete your left thumb enrollment
-win-fp-debug delete --finger 6
-
-# List databases with sensor info, file metadata, and registry details
-win-fp-debug enum-databases
-
-# Reset a corrupted database (deletes file, service recreates it empty)
-win-fp-debug delete-database --db 1 --file
-
-# Remove a ghost database from old hardware
-win-fp-debug delete-database --db 1 --registry
-
-# Nuclear option: wipe file and unregister
-win-fp-debug delete-database --db 1 --file --registry
-
-# Delete everything: all databases, files and registry
-win-fp-debug delete-database --all --file --registry
-
-# Stop the biometric service (keeps it stopped for manual cleanup)
-win-fp-debug stop-service
-
-# Start the biometric service
-win-fp-debug start-service
-```
-
-## Debugging Fingerprint Issues
-
-### Step 1: Run diagnostics
-
-```
-win-fp-debug diagnose
-```
-
-This runs all three diagnostic levels:
-- **Level 1 (Hardware)**: Checks if a biometric PnP device is detected. If nothing shows up, the sensor may be physically disconnected or the driver isn't installed.
-- **Level 2 (Driver/Service)**: Checks if the `WbioSrvc` (Windows Biometric Service) is running. If stopped, fingerprint login won't work.
-- **Level 3 (Sensor)**: Enumerates WinBio biometric units and tests opening a session. If no units appear but hardware is detected, the driver may not be WinBio-compatible.
-
-### Step 2: Check databases
-
-```
-win-fp-debug enum-databases
-```
-
-Each database entry shows:
-- **Database ID / Data Format**: GUIDs identifying the database and its template format
-- **File Path + metadata**: Location of the `.DAT` file, its size, and created/modified timestamps
-- **Registry info**: `AutoCreate`, `BiometricType`, and other WbioSrvc configuration values
-- **Sensor**: Which sensor hardware the database belongs to, including manufacturer, model, device instance ID, engine/storage adapter DLLs, and whether it's currently active
-
-Things to look for:
-- **Missing .DAT file** (`Could not read file metadata: os error 2`): The database is registered but the file doesn't exist. If `AutoCreate=Yes`, restarting WbioSrvc should recreate it. If the sensor is `(not active)`, this is expected for old/replaced hardware.
-- **Sensor "(not active)"**: The database belongs to a sensor that's registered in the device registry but not currently connected. Common after replacing a fingerprint module (e.g., Framework laptop expansion cards). These ghost entries are harmless but can be cleaned up with `delete-database --registry`.
-- **Small file size** (< 1 KB): The database is likely empty (no enrollments).
-- **Multiple databases per sensor**: Each sensor typically has two configurations — a Basic mode (Config #0) and an Advanced/VSM mode (Config #1). Each gets its own database.
-
-### Step 3: Test the sensor
-
-```
-win-fp-debug identify
-```
-
-Touch the sensor. If it recognizes you, the sensor and enrollments are working. If you get `WINBIO_E_UNKNOWN_ID`, you're not enrolled in the active database. If it hangs or errors, the sensor may be malfunctioning.
-
-### Step 4: Check enrollments
-
-```
-win-fp-debug list-fingerprints
-```
-
-Shows which fingers are enrolled for the current user. If empty, you need to re-enroll via Windows Settings or `win-fp-debug enroll --finger N`.
-
-### Step 5: Check credential linkage
-
-```
-win-fp-debug credential-state
-```
-
-If this shows `CREDENTIAL_NOT_SET`, the biometric identity isn't linked to a Windows password hash. This can cause fingerprint login to fail even when enrollment and sensor work fine. Re-link by removing and re-adding fingerprints in Windows Settings > Accounts > Sign-in options.
-
-### Fixing Common Issues
-
-**Corrupted database (sensor works but login fails, or enrollment errors)**:
-```
-win-fp-debug delete-database --db N --file
-```
-Deletes the `.DAT` file. The service recreates it empty on restart. Re-enroll afterward.
-
-**Ghost databases from old hardware**:
-```
-win-fp-debug delete-database --db N --registry
-```
-Removes the registry entry for databases belonging to sensors that are no longer connected.
-
-**Complete reset of one database**:
-```
-win-fp-debug delete-database --db N --file --registry
-```
-Removes both the file and registry entry. The database is fully gone.
-
-**Full system reset (delete all databases)**:
-```
-win-fp-debug delete-database --all --file --registry
-```
-Removes all database files and registry entries. The biometric subsystem is wiped clean.
-
-**Clean up orphaned files after multi-step deletion**:
-
-The `delete-database` command automatically restarts WbioSrvc after finishing. When the service restarts, it may recreate `.DAT` files for connected sensors even if you previously deleted their registry entries. To avoid this, stop the service first and keep it stopped until you're done cleaning up:
-
-```powershell
-# 1. Stop the service (stays stopped until you start it)
-win-fp-debug stop-service
-
-# 2. Delete registry entries — service won't interfere
-win-fp-debug delete-database --all --registry
-
-# 3. Delete .DAT files — nothing will recreate them
-win-fp-debug delete-database --all --file
-
-# 4. Start the service when ready — it recreates clean databases for active sensors
-win-fp-debug start-service
-```
-
-When the service is already stopped, `delete-database` skips the stop/restart steps and leaves it stopped.
-
-**Sensor not detected**: Check Device Manager > Biometric devices. If the device shows an error, try disabling and re-enabling it, or reinstalling the driver.
-
-**WbioSrvc not running**: Open Services (`services.msc`), find "Windows Biometric Service", and start it. Set startup type to "Automatic" if it keeps stopping. Or use `win-fp-debug start-service`.
-
-## Notes
-
-- **Administrator**: `delete-database` and some diagnostics require running as Administrator. The tool will warn if not elevated.
-- **Focus**: Console apps must acquire focus via `WinBioAcquireFocus` before `WinBioIdentify`/`WinBioVerify`. The tool handles this automatically through a `SessionGuard` RAII wrapper.
-- **Interactive commands block**: `identify`, `list-fingerprints`, `verify`, `capture`, and `enroll` will block waiting for a finger touch. Press Ctrl+C to cancel.
-- **Database numbering**: The `--db` argument uses 1-based numbering from `enum-databases` output. Run `enum-databases` first to see which number corresponds to which database.
