@@ -48,6 +48,9 @@ fn main() -> Result<()> {
         Command::Delete { finger } => {
             operations::delete::run_delete(finger)?;
         }
+        Command::Enroll { finger } => {
+            operations::enroll::run_enroll(finger)?;
+        }
     }
 
     Ok(())

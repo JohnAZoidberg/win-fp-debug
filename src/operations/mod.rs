@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod delete;
+pub mod enroll;
 pub mod identify;
 pub mod list;
 pub mod verify;

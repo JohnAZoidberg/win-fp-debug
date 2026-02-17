@@ -28,10 +28,11 @@ pub fn hresult_message(hr: HRESULT) -> &'static str {
         0x8009_8016 => "Database no such record (WINBIO_E_DATABASE_NO_SUCH_RECORD)",
         0x8009_8019 => "Sensor unavailable (WINBIO_E_DEVICE_BUSY)",
         0x8009_802E => "Data collection in progress",
+        0x8009_8015 => "Duplicate enrollment (WINBIO_E_DUPLICATE_ENROLLMENT)",
         0x8009_8029 => "No preboot identity (WINBIO_E_NO_PREBOOT_IDENTITY)",
 
         // WinBio informational
-        0x0009_8001 => "Sample needed for enrollment (WINBIO_I_MORE_DATA)",
+        0x0009_0001 => "Sample needed for enrollment (WINBIO_I_MORE_DATA)",
 
         _ => "Unknown HRESULT",
     }

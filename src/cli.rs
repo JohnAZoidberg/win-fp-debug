@@ -49,4 +49,11 @@ pub enum Command {
         #[arg(long)]
         finger: u8,
     },
+
+    /// Enroll a new fingerprint (requires repeated touches)
+    Enroll {
+        /// Finger position (1–10): 1=RThumb, 2=RIndex, … 6=LThumb, 7=LIndex, …
+        #[arg(long)]
+        finger: u8,
+    },
 }
