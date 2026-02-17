@@ -1,6 +1,9 @@
 pub mod capture;
+pub mod credential_state;
 pub mod delete;
+pub mod delete_database;
 pub mod enroll;
+pub mod enum_databases;
 pub mod identify;
 pub mod list;
 pub mod verify;

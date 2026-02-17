@@ -51,6 +51,15 @@ fn main() -> Result<()> {
         Command::Enroll { finger } => {
             operations::enroll::run_enroll(finger)?;
         }
+        Command::EnumDatabases => {
+            operations::enum_databases::run_enum_databases()?;
+        }
+        Command::DeleteDatabase { db } => {
+            operations::delete_database::run_delete_database(db)?;
+        }
+        Command::CredentialState => {
+            operations::credential_state::run_credential_state()?;
+        }
     }
 
     Ok(())
