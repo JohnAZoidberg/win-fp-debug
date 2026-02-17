@@ -54,8 +54,8 @@ fn main() -> Result<()> {
         Command::EnumDatabases => {
             operations::enum_databases::run_enum_databases()?;
         }
-        Command::DeleteDatabase { db, file, registry } => {
-            operations::delete_database::run_delete_database(db, file, registry)?;
+        Command::DeleteDatabase { db, all, file, registry } => {
+            operations::delete_database::run_delete_database(db, all, file, registry)?;
         }
         Command::CredentialState => {
             operations::credential_state::run_credential_state()?;

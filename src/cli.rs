@@ -60,11 +60,14 @@ pub enum Command {
     /// List biometric storage databases (paths, GUIDs, attributes)
     EnumDatabases,
 
-    /// Delete a biometric database by number from enum-databases
+    /// Delete a biometric database by number, or all databases with --all
     DeleteDatabase {
         /// Database number (1-based, from enum-databases output)
+        #[arg(long, required_unless_present = "all")]
+        db: Option<usize>,
+        /// Delete all databases
         #[arg(long)]
-        db: usize,
+        all: bool,
         /// Delete the .DAT file (resets the database; service recreates it clean)
         #[arg(long)]
         file: bool,

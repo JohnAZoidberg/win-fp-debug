@@ -94,6 +94,7 @@ win-fp-debug <COMMAND>
 | `delete-database --db N --file` | Delete the .DAT file for database N (service recreates it clean on restart) |
 | `delete-database --db N --registry` | Remove the registry entry for database N (fully unregisters it) |
 | `delete-database --db N --file --registry` | Both: wipe the file and unregister the database |
+| `delete-database --all --file --registry` | Delete all databases (files + registry entries) |
 | `credential-state` | Check if a Windows Hello password hash is linked to the biometric identity |
 
 ### Finger Positions
@@ -146,6 +147,9 @@ win-fp-debug delete-database --db 1 --registry
 
 # Nuclear option: wipe file and unregister
 win-fp-debug delete-database --db 1 --file --registry
+
+# Delete everything: all databases, files and registry
+win-fp-debug delete-database --all --file --registry
 ```
 
 ## Debugging Fingerprint Issues
@@ -217,11 +221,17 @@ win-fp-debug delete-database --db N --registry
 ```
 Removes the registry entry for databases belonging to sensors that are no longer connected.
 
-**Complete reset (start from scratch)**:
+**Complete reset of one database**:
 ```
 win-fp-debug delete-database --db N --file --registry
 ```
 Removes both the file and registry entry. The database is fully gone.
+
+**Full system reset (delete all databases)**:
+```
+win-fp-debug delete-database --all --file --registry
+```
+Removes all database files and registry entries. The biometric subsystem is wiped clean.
 
 **Sensor not detected**: Check Device Manager > Biometric devices. If the device shows an error, try disabling and re-enabling it, or reinstalling the driver.
 

@@ -109,23 +109,32 @@ fn delete_database_registry_key(db_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run_delete_database(db_number: usize, delete_file: bool, delete_registry: bool) -> Result<()> {
-    if !delete_file && !delete_registry {
-        bail!("Specify --file to delete the .DAT file, --registry to remove the registry entry, or both");
-    }
+fn format_guid(guid: &windows::core::GUID) -> String {
+    format!(
+        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
+        guid.data1,
+        guid.data2,
+        guid.data3,
+        guid.data4[0],
+        guid.data4[1],
+        guid.data4[2],
+        guid.data4[3],
+        guid.data4[4],
+        guid.data4[5],
+        guid.data4[6],
+        guid.data4[7]
+    )
+}
 
-    print_header("Delete Biometric Database");
+struct DatabaseTarget {
+    index: usize,
+    db_id: String,
+    file_path: String,
+}
 
-    if db_number == 0 {
-        bail!("Database number must be 1 or greater (use enum-databases to see the list)");
-    }
-
-    if !crate::elevation::is_elevated()? {
-        bail!("This command requires Administrator privileges. Re-run as Administrator.");
-    }
-
-    // Enumerate databases to find the target
-    let (file_path, db_id) = unsafe {
+/// Enumerate databases and return the targets to operate on.
+fn enumerate_targets(db_number: Option<usize>) -> Result<Vec<DatabaseTarget>> {
+    unsafe {
         let mut schema_array: *mut WINBIO_STORAGE_SCHEMA = std::ptr::null_mut();
         let mut schema_count: usize = 0;
 
@@ -143,70 +152,141 @@ pub fn run_delete_database(db_number: usize, delete_file: bool, delete_registry:
             bail!("No biometric databases found");
         }
 
-        if db_number > schema_count {
-            let count = schema_count;
-            if !schema_array.is_null() {
-                winbio_helpers::winbio_free(schema_array as *const _);
-            }
-            bail!(
-                "Database number {} is out of range (found {} database(s))",
-                db_number,
-                count
-            );
-        }
-
         let schemas = std::slice::from_raw_parts(schema_array, schema_count);
-        let schema = &schemas[db_number - 1];
 
-        let file_path = winbio_helpers::wchar_to_string(&schema.FilePath);
-        let db_id = format!(
-            "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
-            schema.DatabaseId.data1,
-            schema.DatabaseId.data2,
-            schema.DatabaseId.data3,
-            schema.DatabaseId.data4[0],
-            schema.DatabaseId.data4[1],
-            schema.DatabaseId.data4[2],
-            schema.DatabaseId.data4[3],
-            schema.DatabaseId.data4[4],
-            schema.DatabaseId.data4[5],
-            schema.DatabaseId.data4[6],
-            schema.DatabaseId.data4[7]
-        );
+        let targets = match db_number {
+            Some(n) => {
+                if n == 0 || n > schema_count {
+                    if !schema_array.is_null() {
+                        winbio_helpers::winbio_free(schema_array as *const _);
+                    }
+                    bail!(
+                        "Database number {} is out of range (found {} database(s))",
+                        n,
+                        schema_count
+                    );
+                }
+                let schema = &schemas[n - 1];
+                vec![DatabaseTarget {
+                    index: n,
+                    db_id: format_guid(&schema.DatabaseId),
+                    file_path: winbio_helpers::wchar_to_string(&schema.FilePath),
+                }]
+            }
+            None => schemas
+                .iter()
+                .enumerate()
+                .map(|(i, schema)| DatabaseTarget {
+                    index: i + 1,
+                    db_id: format_guid(&schema.DatabaseId),
+                    file_path: winbio_helpers::wchar_to_string(&schema.FilePath),
+                })
+                .collect(),
+        };
 
         if !schema_array.is_null() {
             winbio_helpers::winbio_free(schema_array as *const _);
         }
 
-        (file_path, db_id)
-    };
+        Ok(targets)
+    }
+}
 
-    print_info("Target", &format!("Database {} — {}", db_number, db_id));
-    if !file_path.is_empty() {
-        print_info("File", &file_path);
+/// Process a single database target. Returns true if all operations succeeded.
+fn process_target(target: &DatabaseTarget, delete_file: bool, delete_registry: bool) -> bool {
+    let mut ok = true;
+
+    println!();
+    print_step(&format!("Database {} — {}", target.index, target.db_id));
+
+    let file_exists =
+        !target.file_path.is_empty() && std::path::Path::new(&target.file_path).exists();
+
+    if delete_file {
+        if file_exists {
+            if let Ok(meta) = std::fs::metadata(&target.file_path) {
+                print_info("  File Size", &format!("{} bytes", meta.len()));
+            }
+            match std::fs::remove_file(&target.file_path) {
+                Ok(()) => print_pass(&format!("  Deleted {}", target.file_path)),
+                Err(e) => {
+                    print_fail(&format!("  Failed to delete file: {}", e));
+                    ok = false;
+                }
+            }
+        } else if !target.file_path.is_empty() {
+            print_info("  File", "does not exist (already deleted or on-chip)");
+        }
+    }
+
+    if delete_registry {
+        match delete_database_registry_key(&target.db_id) {
+            Ok(()) => print_pass("  Registry entry deleted"),
+            Err(e) => {
+                print_fail(&format!("  {}", e));
+                ok = false;
+            }
+        }
+    }
+
+    ok
+}
+
+pub fn run_delete_database(
+    db_number: Option<usize>,
+    all: bool,
+    delete_file: bool,
+    delete_registry: bool,
+) -> Result<()> {
+    if !delete_file && !delete_registry {
+        bail!("Specify --file to delete the .DAT file, --registry to remove the registry entry, or both");
+    }
+
+    if !crate::elevation::is_elevated()? {
+        bail!("This command requires Administrator privileges. Re-run as Administrator.");
+    }
+
+    let targets = enumerate_targets(if all { None } else { db_number })?;
+
+    if all {
+        print_header(&format!("Delete All Biometric Databases ({})", targets.len()));
+    } else {
+        print_header("Delete Biometric Database");
     }
 
     let mut actions: Vec<&str> = Vec::new();
     if delete_file {
-        actions.push("delete .DAT file");
+        actions.push("delete .DAT file(s)");
     }
     if delete_registry {
-        actions.push("delete registry entry");
+        actions.push("delete registry entry/entries");
     }
     print_info("Actions", &actions.join(", "));
 
-    // Determine if we need to touch the file
-    let file_exists = !file_path.is_empty() && std::path::Path::new(&file_path).exists();
-
-    if delete_file && !file_path.is_empty() && file_exists {
-        if let Ok(meta) = std::fs::metadata(&file_path) {
-            print_info("File Size", &format!("{} bytes", meta.len()));
+    if all {
+        for t in &targets {
+            print_info(
+                &format!("  Database {}", t.index),
+                &format!(
+                    "{} — {}",
+                    t.db_id,
+                    if t.file_path.is_empty() {
+                        "(no file)"
+                    } else {
+                        &t.file_path
+                    }
+                ),
+            );
         }
-    } else if delete_file && !file_path.is_empty() && !file_exists {
-        print_warn("Database file does not exist on disk (already deleted or stored on-chip)");
+    } else {
+        let t = &targets[0];
+        print_info("Target", &format!("Database {} — {}", t.index, t.db_id));
+        if !t.file_path.is_empty() {
+            print_info("File", &t.file_path);
+        }
     }
 
-    // Stop the service (needed for both file and registry operations)
+    // Stop the service
     print_step("Stopping WbioSrvc service...");
     let was_running = unsafe { stop_wbiosrvc()? };
     if was_running {
@@ -215,45 +295,22 @@ pub fn run_delete_database(db_number: usize, delete_file: bool, delete_registry:
         print_info("WbioSrvc", "was already stopped");
     }
 
+    // Process each target
     let mut any_error = false;
-
-    // Delete the .DAT file
-    if delete_file && file_exists {
-        print_step(&format!("Deleting {}...", file_path));
-        match std::fs::remove_file(&file_path) {
-            Ok(()) => {
-                print_pass("Database file deleted");
-            }
-            Err(e) => {
-                print_fail(&format!("Failed to delete database file: {}", e));
-                any_error = true;
-            }
-        }
-    }
-
-    // Delete the registry key
-    if delete_registry {
-        print_step(&format!(
-            "Deleting registry key HKLM\\...\\WbioSrvc\\Databases\\{}...",
-            db_id
-        ));
-        match delete_database_registry_key(&db_id) {
-            Ok(()) => {
-                print_pass("Registry entry deleted");
-            }
-            Err(e) => {
-                print_fail(&format!("{}", e));
-                any_error = true;
-            }
+    for target in &targets {
+        if !process_target(target, delete_file, delete_registry) {
+            any_error = true;
         }
     }
 
     // Restart the service
     if was_running {
+        println!();
         print_step("Restarting WbioSrvc service...");
         unsafe { start_wbiosrvc()? };
         print_pass("WbioSrvc restarted");
     } else {
+        println!();
         print_info(
             "Note",
             "WbioSrvc was not running — start it manually if needed",
@@ -265,12 +322,21 @@ pub fn run_delete_database(db_number: usize, delete_file: bool, delete_registry:
     }
 
     println!();
+    let count = targets.len();
     if delete_registry {
-        print_pass("Database unregistered");
-        print_step("The database has been fully removed from the system");
+        print_pass(&format!(
+            "{} database(s) unregistered",
+            count
+        ));
+        print_step("Databases have been fully removed from the system");
     } else {
-        print_pass("Database file deleted");
-        print_step("Service will recreate a clean empty database");
+        print_pass(&format!(
+            "{} database file(s) deleted",
+            count
+        ));
+        print_step("Service will recreate clean empty databases");
+    }
+    if delete_file || delete_registry {
         print_step("Re-enroll fingerprints via Windows Settings > Accounts > Sign-in options");
     }
 
