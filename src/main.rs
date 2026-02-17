@@ -66,6 +66,12 @@ fn main() -> Result<()> {
         Command::CredentialState => {
             operations::credential_state::run_credential_state()?;
         }
+        Command::ReinstallDriver => {
+            operations::reinstall_driver::run_reinstall_driver()?;
+        }
+        Command::RemoveDevice { instance_id, phantom } => {
+            operations::remove_device::run_remove_device(instance_id, phantom)?;
+        }
     }
 
     Ok(())

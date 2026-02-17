@@ -6,6 +6,8 @@ pub mod enroll;
 pub mod enum_databases;
 pub mod identify;
 pub mod list;
+pub mod reinstall_driver;
+pub mod remove_device;
 pub mod service;
 pub mod verify;
 

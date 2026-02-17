@@ -84,4 +84,17 @@ pub enum Command {
 
     /// Check if a Windows Hello credential (password hash) is linked to the biometric identity
     CredentialState,
+
+    /// Remove and rescan the biometric device to force driver reinstallation
+    ReinstallDriver,
+
+    /// Remove a PnP device entry by instance ID (requires admin)
+    RemoveDevice {
+        /// Instance ID of the device to remove (from check-hardware output)
+        #[arg(long, conflicts_with = "phantom")]
+        instance_id: Option<String>,
+        /// Remove all phantom (ghost) biometric devices
+        #[arg(long, conflicts_with = "instance_id")]
+        phantom: bool,
+    },
 }
