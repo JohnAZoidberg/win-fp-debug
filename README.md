@@ -97,6 +97,13 @@ win-fp-debug <COMMAND>
 | `delete-database --all --file --registry` | Delete all databases (files + registry entries) |
 | `credential-state` | Check if a Windows Hello password hash is linked to the biometric identity |
 
+### Service Commands
+
+| Command | Description |
+|---|---|
+| `stop-service` | Stop the WbioSrvc (Windows Biometric Service) |
+| `start-service` | Start the WbioSrvc (Windows Biometric Service) |
+
 ### Finger Positions
 
 | Number | Finger |
@@ -150,6 +157,12 @@ win-fp-debug delete-database --db 1 --file --registry
 
 # Delete everything: all databases, files and registry
 win-fp-debug delete-database --all --file --registry
+
+# Stop the biometric service (keeps it stopped for manual cleanup)
+win-fp-debug stop-service
+
+# Start the biometric service
+win-fp-debug start-service
 ```
 
 ## Debugging Fingerprint Issues
@@ -233,9 +246,29 @@ win-fp-debug delete-database --all --file --registry
 ```
 Removes all database files and registry entries. The biometric subsystem is wiped clean.
 
+**Clean up orphaned files after multi-step deletion**:
+
+The `delete-database` command automatically restarts WbioSrvc after finishing. When the service restarts, it may recreate `.DAT` files for connected sensors even if you previously deleted their registry entries. To avoid this, stop the service first and keep it stopped until you're done cleaning up:
+
+```powershell
+# 1. Stop the service (stays stopped until you start it)
+win-fp-debug stop-service
+
+# 2. Delete registry entries — service won't interfere
+win-fp-debug delete-database --all --registry
+
+# 3. Delete .DAT files — nothing will recreate them
+win-fp-debug delete-database --all --file
+
+# 4. Start the service when ready — it recreates clean databases for active sensors
+win-fp-debug start-service
+```
+
+When the service is already stopped, `delete-database` skips the stop/restart steps and leaves it stopped.
+
 **Sensor not detected**: Check Device Manager > Biometric devices. If the device shows an error, try disabling and re-enabling it, or reinstalling the driver.
 
-**WbioSrvc not running**: Open Services (`services.msc`), find "Windows Biometric Service", and start it. Set startup type to "Automatic" if it keeps stopping.
+**WbioSrvc not running**: Open Services (`services.msc`), find "Windows Biometric Service", and start it. Set startup type to "Automatic" if it keeps stopping. Or use `win-fp-debug start-service`.
 
 ## Notes
 

@@ -57,6 +57,12 @@ fn main() -> Result<()> {
         Command::DeleteDatabase { db, all, file, registry } => {
             operations::delete_database::run_delete_database(db, all, file, registry)?;
         }
+        Command::StopService => {
+            operations::service::run_stop_service()?;
+        }
+        Command::StartService => {
+            operations::service::run_start_service()?;
+        }
         Command::CredentialState => {
             operations::credential_state::run_credential_state()?;
         }

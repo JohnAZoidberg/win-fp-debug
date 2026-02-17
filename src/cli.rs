@@ -76,6 +76,12 @@ pub enum Command {
         registry: bool,
     },
 
+    /// Stop the WbioSrvc (Windows Biometric Service)
+    StopService,
+
+    /// Start the WbioSrvc (Windows Biometric Service)
+    StartService,
+
     /// Check if a Windows Hello credential (password hash) is linked to the biometric identity
     CredentialState,
 }

@@ -576,11 +576,61 @@ fn print_sensor_info(links: &[SensorDatabaseLink]) {
     }
 }
 
+/// Scan the WINBIODATABASE directory for .DAT files not in the registered set.
+fn find_orphaned_files(registered_paths: &std::collections::HashSet<String>) {
+    let db_dir = std::path::Path::new(r"C:\WINDOWS\SYSTEM32\WINBIODATABASE");
+    let entries = match std::fs::read_dir(db_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut orphans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("DAT") {
+            let path_str = path.to_string_lossy().to_uppercase();
+            if !registered_paths.contains(&path_str) {
+                orphans.push(path);
+            }
+        }
+    }
+
+    if orphans.is_empty() {
+        return;
+    }
+
+    println!();
+    print_warn(&format!(
+        "{} orphaned .DAT file(s) (on disk but not registered)",
+        orphans.len()
+    ));
+    for path in &orphans {
+        println!();
+        print_step(&format!("Orphan: {}", path.display()));
+        if let Ok(meta) = std::fs::metadata(path) {
+            print_info("  File Size", &format_file_size(meta.len()));
+            if let Ok(created) = meta.created() {
+                print_info("  Created", &format_system_time(created));
+            }
+            if let Ok(modified) = meta.modified() {
+                print_info("  Modified", &format_system_time(modified));
+            }
+        }
+        print_info(
+            "  Status",
+            "No registry entry — delete this file manually or re-register the database",
+        );
+    }
+}
+
 pub fn run_enum_databases() -> Result<()> {
     print_header("Biometric Storage Databases");
 
     // Build sensor-to-database map from registry
     let sensor_map = build_sensor_database_map();
+
+    // Track registered file paths to detect orphans
+    let mut registered_paths = std::collections::HashSet::new();
 
     unsafe {
         let mut schema_array: *mut WINBIO_STORAGE_SCHEMA = std::ptr::null_mut();
@@ -607,6 +657,11 @@ pub fn run_enum_databases() -> Result<()> {
                 print_info("Attributes", &attributes_string(schema.Attributes));
                 let file_path = winbio_helpers::wchar_to_string(&schema.FilePath);
                 let conn_string = winbio_helpers::wchar_to_string(&schema.ConnectionString);
+
+                if !file_path.is_empty() {
+                    registered_paths.insert(file_path.to_uppercase());
+                }
+
                 print_info(
                     "File Path",
                     if file_path.is_empty() {
@@ -645,6 +700,9 @@ pub fn run_enum_databases() -> Result<()> {
             winbio_helpers::winbio_free(schema_array as *const _);
         }
     }
+
+    // Check for orphaned .DAT files
+    find_orphaned_files(&registered_paths);
 
     Ok(())
 }

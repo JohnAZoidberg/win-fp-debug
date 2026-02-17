@@ -132,8 +132,9 @@ struct DatabaseTarget {
     file_path: String,
 }
 
-/// Enumerate databases and return the targets to operate on.
-fn enumerate_targets(db_number: Option<usize>) -> Result<Vec<DatabaseTarget>> {
+/// Enumerate registered databases and return the targets to operate on.
+/// When `all` is true and no databases are registered, returns an empty vec instead of an error.
+fn enumerate_targets(db_number: Option<usize>, all: bool) -> Result<Vec<DatabaseTarget>> {
     unsafe {
         let mut schema_array: *mut WINBIO_STORAGE_SCHEMA = std::ptr::null_mut();
         let mut schema_count: usize = 0;
@@ -148,6 +149,9 @@ fn enumerate_targets(db_number: Option<usize>) -> Result<Vec<DatabaseTarget>> {
         if schema_count == 0 {
             if !schema_array.is_null() {
                 winbio_helpers::winbio_free(schema_array as *const _);
+            }
+            if all {
+                return Ok(Vec::new());
             }
             bail!("No biometric databases found");
         }
@@ -190,6 +194,32 @@ fn enumerate_targets(db_number: Option<usize>) -> Result<Vec<DatabaseTarget>> {
 
         Ok(targets)
     }
+}
+
+/// Find .DAT files in the WINBIODATABASE directory that aren't in the registered set.
+/// Returns the paths of orphaned files.
+fn find_orphaned_dat_files(registered_paths: &[&str]) -> Vec<std::path::PathBuf> {
+    let db_dir = std::path::Path::new(r"C:\WINDOWS\SYSTEM32\WINBIODATABASE");
+    let entries = match std::fs::read_dir(db_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let registered_upper: std::collections::HashSet<String> = registered_paths
+        .iter()
+        .map(|p| p.to_uppercase())
+        .collect();
+
+    let mut orphans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("DAT")
+            && !registered_upper.contains(&path.to_string_lossy().to_uppercase())
+        {
+            orphans.push(path);
+        }
+    }
+    orphans
 }
 
 /// Process a single database target. Returns true if all operations succeeded.
@@ -246,10 +276,41 @@ pub fn run_delete_database(
         bail!("This command requires Administrator privileges. Re-run as Administrator.");
     }
 
-    let targets = enumerate_targets(if all { None } else { db_number })?;
+    let targets = enumerate_targets(if all { None } else { db_number }, all)?;
+
+    // When --all --file, also find orphaned .DAT files not in the registered set
+    let orphans = if all && delete_file {
+        let registered: Vec<&str> = targets.iter().map(|t| t.file_path.as_str()).collect();
+        find_orphaned_dat_files(&registered)
+    } else {
+        Vec::new()
+    };
+
+    let total_work = targets.len() + orphans.len();
+    if total_work == 0 {
+        println!();
+        print_info("Nothing to do", "no registered databases or .DAT files found");
+        return Ok(());
+    }
 
     if all {
-        print_header(&format!("Delete All Biometric Databases ({})", targets.len()));
+        print_header(&format!(
+            "Delete All Biometric Databases ({}{})",
+            if targets.is_empty() {
+                String::new()
+            } else {
+                format!("{} registered", targets.len())
+            },
+            if !orphans.is_empty() {
+                if targets.is_empty() {
+                    format!("{} orphaned", orphans.len())
+                } else {
+                    format!(", {} orphaned", orphans.len())
+                }
+            } else {
+                String::new()
+            }
+        ));
     } else {
         print_header("Delete Biometric Database");
     }
@@ -278,6 +339,9 @@ pub fn run_delete_database(
                 ),
             );
         }
+        for path in &orphans {
+            print_info("  Orphan", &path.to_string_lossy());
+        }
     } else {
         let t = &targets[0];
         print_info("Target", &format!("Database {} — {}", t.index, t.db_id));
@@ -295,11 +359,24 @@ pub fn run_delete_database(
         print_info("WbioSrvc", "was already stopped");
     }
 
-    // Process each target
+    // Process registered targets
     let mut any_error = false;
     for target in &targets {
         if !process_target(target, delete_file, delete_registry) {
             any_error = true;
+        }
+    }
+
+    // Delete orphaned files
+    for path in &orphans {
+        println!();
+        print_step(&format!("Orphan: {}", path.display()));
+        match std::fs::remove_file(path) {
+            Ok(()) => print_pass(&format!("  Deleted {}", path.display())),
+            Err(e) => {
+                print_fail(&format!("  Failed to delete: {}", e));
+                any_error = true;
+            }
         }
     }
 
@@ -322,23 +399,32 @@ pub fn run_delete_database(
     }
 
     println!();
-    let count = targets.len();
-    if delete_registry {
-        print_pass(&format!(
-            "{} database(s) unregistered",
-            count
-        ));
+    let file_count = targets
+        .iter()
+        .filter(|t| !t.file_path.is_empty())
+        .count()
+        + orphans.len();
+    if delete_registry && targets.is_empty() && !orphans.is_empty() {
+        print_pass(&format!("{} orphaned file(s) deleted", orphans.len()));
+    } else if delete_registry {
+        print_pass(&format!("{} database(s) unregistered", targets.len()));
+        if !orphans.is_empty() {
+            print_pass(&format!("{} orphaned file(s) deleted", orphans.len()));
+        }
         print_step("Databases have been fully removed from the system");
     } else {
-        print_pass(&format!(
-            "{} database file(s) deleted",
-            count
-        ));
-        print_step("Service will recreate clean empty databases");
+        print_pass(&format!("{} database file(s) deleted", file_count));
+        if !targets.is_empty() {
+            print_step("Service will recreate clean empty databases");
+        }
     }
-    if delete_file || delete_registry {
-        print_step("Re-enroll fingerprints via Windows Settings > Accounts > Sign-in options");
+    if delete_file && was_running {
+        print_warn(
+            "WbioSrvc was restarted and may recreate .DAT files for active sensors. \
+             To prevent this, use stop-service before deleting and start-service after.",
+        );
     }
+    print_step("Re-enroll fingerprints via Windows Settings > Accounts > Sign-in options");
 
     Ok(())
 }
