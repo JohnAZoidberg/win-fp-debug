@@ -54,7 +54,12 @@ fn main() -> Result<()> {
         Command::EnumDatabases => {
             operations::enum_databases::run_enum_databases()?;
         }
-        Command::DeleteDatabase { db, all, file, registry } => {
+        Command::DeleteDatabase {
+            db,
+            all,
+            file,
+            registry,
+        } => {
             operations::delete_database::run_delete_database(db, all, file, registry)?;
         }
         Command::StopService => {
@@ -69,7 +74,10 @@ fn main() -> Result<()> {
         Command::ReinstallDriver => {
             operations::reinstall_driver::run_reinstall_driver()?;
         }
-        Command::RemoveDevice { instance_id, phantom } => {
+        Command::RemoveDevice {
+            instance_id,
+            phantom,
+        } => {
             operations::remove_device::run_remove_device(instance_id, phantom)?;
         }
     }

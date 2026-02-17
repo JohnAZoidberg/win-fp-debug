@@ -68,8 +68,7 @@ unsafe fn start_wbiosrvc() -> Result<()> {
         }
     };
 
-    StartServiceW(service, None)
-        .map_err(|e| anyhow::anyhow!("Failed to start WbioSrvc: {}", e))?;
+    StartServiceW(service, None).map_err(|e| anyhow::anyhow!("Failed to start WbioSrvc: {}", e))?;
 
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -205,10 +204,8 @@ fn find_orphaned_dat_files(registered_paths: &[&str]) -> Vec<std::path::PathBuf>
         Err(_) => return Vec::new(),
     };
 
-    let registered_upper: std::collections::HashSet<String> = registered_paths
-        .iter()
-        .map(|p| p.to_uppercase())
-        .collect();
+    let registered_upper: std::collections::HashSet<String> =
+        registered_paths.iter().map(|p| p.to_uppercase()).collect();
 
     let mut orphans = Vec::new();
     for entry in entries.flatten() {
@@ -289,7 +286,10 @@ pub fn run_delete_database(
     let total_work = targets.len() + orphans.len();
     if total_work == 0 {
         println!();
-        print_info("Nothing to do", "no registered databases or .DAT files found");
+        print_info(
+            "Nothing to do",
+            "no registered databases or .DAT files found",
+        );
         return Ok(());
     }
 
@@ -399,11 +399,7 @@ pub fn run_delete_database(
     }
 
     println!();
-    let file_count = targets
-        .iter()
-        .filter(|t| !t.file_path.is_empty())
-        .count()
-        + orphans.len();
+    let file_count = targets.iter().filter(|t| !t.file_path.is_empty()).count() + orphans.len();
     if delete_registry && targets.is_empty() && !orphans.is_empty() {
         print_pass(&format!("{} orphaned file(s) deleted", orphans.len()));
     } else if delete_registry {

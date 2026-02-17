@@ -11,10 +11,7 @@ use super::SessionGuard;
 // The windows crate wraps all success HRESULTs (including WINBIO_I_MORE_DATA = 0x00098001)
 // as Ok(()), losing the distinction between "template complete" and "need more samples".
 unsafe extern "system" {
-    fn WinBioEnrollCapture(
-        SessionHandle: u32,
-        RejectDetail: *mut u32,
-    ) -> HRESULT;
+    fn WinBioEnrollCapture(SessionHandle: u32, RejectDetail: *mut u32) -> HRESULT;
 }
 
 const WINBIO_I_MORE_DATA: HRESULT = HRESULT(0x0009_0001_u32 as i32);

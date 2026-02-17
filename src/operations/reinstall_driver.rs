@@ -90,11 +90,7 @@ fn export_driver(oem_inf: &str, dest_dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dest_dir)?;
 
     let output = Command::new("pnputil")
-        .args([
-            "/export-driver",
-            oem_inf,
-            &dest_dir.to_string_lossy(),
-        ])
+        .args(["/export-driver", oem_inf, &dest_dir.to_string_lossy()])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run pnputil /export-driver: {}", e))?;
 
@@ -112,7 +108,7 @@ fn export_driver(oem_inf: &str, dest_dir: &Path) -> Result<PathBuf> {
     for entry in std::fs::read_dir(dest_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "inf") {
+        if path.extension().is_some_and(|ext| ext == "inf") {
             return Ok(path);
         }
     }
@@ -181,11 +177,7 @@ pub fn run_reinstall_driver() -> Result<()> {
     // processing including AddReg sections that create WinBio database entries.
     print_step("Reinstalling driver...");
     let add_output = Command::new("pnputil")
-        .args([
-            "/add-driver",
-            &inf_path.to_string_lossy(),
-            "/install",
-        ])
+        .args(["/add-driver", &inf_path.to_string_lossy(), "/install"])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run pnputil /add-driver: {}", e))?;
 

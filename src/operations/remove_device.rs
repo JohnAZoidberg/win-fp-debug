@@ -39,10 +39,13 @@ fn find_phantom_biometric_devices() -> Result<Vec<String>> {
 
 /// Remove a single device by instance ID using CfgMgr32 APIs.
 fn remove_device_by_instance_id(instance_id: &str) -> Result<()> {
-    use windows::Win32::Devices::DeviceAndDriverInstallation::*;
     use windows::core::PCWSTR;
+    use windows::Win32::Devices::DeviceAndDriverInstallation::*;
 
-    let wide: Vec<u16> = instance_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = instance_id
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     unsafe {
         let mut devnode: u32 = 0;
@@ -73,7 +76,7 @@ fn remove_device_by_instance_id(instance_id: &str) -> Result<()> {
 }
 
 pub fn run_remove_device(instance_id: Option<String>, phantom: bool) -> Result<()> {
-    if !instance_id.is_some() && !phantom {
+    if instance_id.is_none() && !phantom {
         bail!("Either --instance-id <ID> or --phantom is required");
     }
 
@@ -114,7 +117,10 @@ pub fn run_remove_device(instance_id: Option<String>, phantom: bool) -> Result<(
     }
 
     println!();
-    print_info("Summary", &format!("{} removed, {} failed", removed, failed));
+    print_info(
+        "Summary",
+        &format!("{} removed, {} failed", removed, failed),
+    );
 
     Ok(())
 }

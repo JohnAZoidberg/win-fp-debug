@@ -44,11 +44,7 @@ pub fn run_stop_service() -> Result<()> {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
             .map_err(|e| anyhow::anyhow!("Cannot open Service Control Manager: {}", e))?;
 
-        let service = match OpenServiceW(
-            scm,
-            w!("WbioSrvc"),
-            SERVICE_STOP | SERVICE_QUERY_STATUS,
-        ) {
+        let service = match OpenServiceW(scm, w!("WbioSrvc"), SERVICE_STOP | SERVICE_QUERY_STATUS) {
             Ok(s) => s,
             Err(e) => {
                 let _ = CloseServiceHandle(scm);
@@ -97,11 +93,8 @@ pub fn run_start_service() -> Result<()> {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
             .map_err(|e| anyhow::anyhow!("Cannot open Service Control Manager: {}", e))?;
 
-        let service = match OpenServiceW(
-            scm,
-            w!("WbioSrvc"),
-            SERVICE_START | SERVICE_QUERY_STATUS,
-        ) {
+        let service = match OpenServiceW(scm, w!("WbioSrvc"), SERVICE_START | SERVICE_QUERY_STATUS)
+        {
             Ok(s) => s,
             Err(e) => {
                 let _ = CloseServiceHandle(scm);

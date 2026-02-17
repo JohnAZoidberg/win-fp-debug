@@ -1,8 +1,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Devices::BiometricFramework::*;
 use windows::Win32::System::Registry::*;
-use windows::core::{PCWSTR, PWSTR};
 
 use crate::output::*;
 use crate::winbio_helpers;
@@ -85,7 +85,16 @@ fn format_system_time(time: std::time::SystemTime) -> String {
     let month_days = [
         31,
         if is_leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
 
     let mut month = 0usize;
@@ -127,8 +136,10 @@ fn print_file_metadata(file_path: &str) {
 
 fn read_registry_string(key: HKEY, value_name: &str) -> Option<String> {
     unsafe {
-        let value_name_wide: Vec<u16> =
-            value_name.encode_utf16().chain(std::iter::once(0)).collect();
+        let value_name_wide: Vec<u16> = value_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let mut data_type = REG_VALUE_TYPE::default();
         let mut data_size: u32 = 0;
 
@@ -289,12 +300,9 @@ fn read_device_winbio_config(
         }
 
         let result = read_registry_string(hkey, "DatabaseId").map(|db_id| {
-            let engine =
-                read_registry_string(hkey, "EngineAdapterBinary").unwrap_or_default();
-            let storage =
-                read_registry_string(hkey, "StorageAdapterBinary").unwrap_or_default();
-            let sensor_mode_val =
-                read_registry_string(hkey, "SensorMode").unwrap_or_default();
+            let engine = read_registry_string(hkey, "EngineAdapterBinary").unwrap_or_default();
+            let storage = read_registry_string(hkey, "StorageAdapterBinary").unwrap_or_default();
+            let sensor_mode_val = read_registry_string(hkey, "SensorMode").unwrap_or_default();
             let vsm = read_registry_string(hkey, "VirtualSecureMode")
                 .map(|v| v == "1")
                 .unwrap_or(false);
@@ -338,8 +346,7 @@ fn read_device_winbio_config(
 fn enum_registry_subkeys(parent: HKEY, subpath: &str) -> Vec<String> {
     let mut result = Vec::new();
     unsafe {
-        let subpath_wide: Vec<u16> =
-            subpath.encode_utf16().chain(std::iter::once(0)).collect();
+        let subpath_wide: Vec<u16> = subpath.encode_utf16().chain(std::iter::once(0)).collect();
         let mut hkey = HKEY::default();
         let status = RegOpenKeyExW(
             parent,
@@ -383,10 +390,7 @@ fn enum_registry_subkeys(parent: HKEY, subpath: &str) -> Vec<String> {
 /// is not currently active as a biometric unit.
 fn read_device_friendly_name(device_instance_id: &str) -> String {
     unsafe {
-        let subkey = format!(
-            "SYSTEM\\CurrentControlSet\\Enum\\{}",
-            device_instance_id
-        );
+        let subkey = format!("SYSTEM\\CurrentControlSet\\Enum\\{}", device_instance_id);
         let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
         let mut hkey = HKEY::default();
         let status = RegOpenKeyExW(
@@ -434,8 +438,7 @@ fn build_sensor_database_map() -> HashMap<String, Vec<SensorDatabaseLink>> {
         if result.is_ok() && unit_count > 0 {
             let units = std::slice::from_raw_parts(unit_array, unit_count);
             for unit in units {
-                let device_instance_id =
-                    winbio_helpers::wchar_to_string(&unit.DeviceInstanceId);
+                let device_instance_id = winbio_helpers::wchar_to_string(&unit.DeviceInstanceId);
                 let description = winbio_helpers::wchar_to_string(&unit.Description);
                 let manufacturer = winbio_helpers::wchar_to_string(&unit.Manufacturer);
                 let model = winbio_helpers::wchar_to_string(&unit.Model);
@@ -465,7 +468,8 @@ fn build_sensor_database_map() -> HashMap<String, Vec<SensorDatabaseLink>> {
 
     // Pass 2: scan registry for all USB devices with WinBio configurations
     // This catches sensors that are registered but not currently active
-    let usb_vid_pids = enum_registry_subkeys(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum\\USB");
+    let usb_vid_pids =
+        enum_registry_subkeys(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum\\USB");
     for vid_pid in &usb_vid_pids {
         let serials = enum_registry_subkeys(
             HKEY_LOCAL_MACHINE,

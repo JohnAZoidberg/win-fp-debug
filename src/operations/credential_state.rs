@@ -40,20 +40,15 @@ pub fn run_credential_state() -> Result<()> {
         print_info("Unit ID", &unit_id.to_string());
         print_info("Finger", &winbio_helpers::subfactor_name(subfactor));
 
-        let credential_state = WinBioGetCredentialState(
-            identity,
-            WINBIO_CREDENTIAL_PASSWORD,
-        )
-        .map_err(|e| crate::error::wrap_winbio_error("WinBioGetCredentialState", &e))?;
+        let credential_state = WinBioGetCredentialState(identity, WINBIO_CREDENTIAL_PASSWORD)
+            .map_err(|e| crate::error::wrap_winbio_error("WinBioGetCredentialState", &e))?;
 
         println!();
         if credential_state == WINBIO_CREDENTIAL_SET {
             print_pass("Password credential is SET — Windows Hello login should work");
         } else if credential_state == WINBIO_CREDENTIAL_NOT_SET {
             print_fail("Password credential is NOT SET");
-            print_warn(
-                "This means no password hash is linked to the biometric identity.",
-            );
+            print_warn("This means no password hash is linked to the biometric identity.");
             print_warn(
                 "This is a common cause of \"fingerprint enrolled but login doesn't work.\"",
             );

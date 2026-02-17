@@ -276,17 +276,15 @@ fn check_database_config() {
 
             println!("    Configuration {} DatabaseId: {}", config_name, db_id);
             if registered {
-                print_pass(&format!("    Registered in WbioSrvc\\Databases"));
+                print_pass("    Registered in WbioSrvc\\Databases");
             } else {
-                print_fail(&format!("    Not registered in WbioSrvc\\Databases"));
+                print_fail("    Not registered in WbioSrvc\\Databases");
                 any_mismatch = true;
             }
         }
     }
 
     if any_mismatch {
-        print_step(
-            "Reinstall the fingerprint sensor driver to recreate missing database entries",
-        );
+        print_step("Reinstall the fingerprint sensor driver to recreate missing database entries");
     }
 }
